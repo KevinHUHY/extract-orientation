@@ -1,0 +1,6 @@
+SET( CMAKE_CXX_COMPILER clang++ )
+cmake_minimum_required( VERSION 2.8 )
+project( orient )
+find_package( OpenCV REQUIRED )
+add_executable( orient orient.cc )
+target_link_libraries(orient ${OpenCV_LIBS} )
