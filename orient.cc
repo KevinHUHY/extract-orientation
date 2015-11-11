@@ -219,6 +219,7 @@ void saveAngleGraph (const string& imageName, const Mat& angles,
         }
     }
 
+    cout << "saving " << imageName << endl;
     cvtColor(imageOfAngles, imageOfAngles, CV_RGB2BGR);
     imwrite(imageName, imageOfAngles);
 }
@@ -282,30 +283,30 @@ void saveMagnitudeGraph (const string& imageName, const Mat& magnitudes)
 
 int main(const int argc, const char* argv[])
 {
+    if (argc != 4) {
+        cout << "usage: file_name, num_of_iter, save_step_size" << endl;
+        return 0;
+    }
 
-    const string imageName = "Starry_Night.jpg";
-    const int iterationTimes = 20;
+    const string imageName = argv[1];
+    const int iterationTimes = atoi(argv[2]);
+    const int saveStep = atoi(argv[3]);
+
     Mat coloredImage = imread(imageName, CV_LOAD_IMAGE_COLOR);
     Mat angles, magnitudes;
     calcGradients(imageName, angles, magnitudes);
-    // saveAngleGraph("cppNoFiltered.jpg", angles, magnitudes, 0.0f);
-    // saveAngleGraph("cppFiltered01.jpg", angles, magnitudes, 0.1f);
-    // saveAngleGraph("cppFiltered015.jpg", angles, magnitudes, 0.15f);
+    saveAngleGraph(imageName+"_original_grad.jpg", angles, magnitudes, 0.0f);
 
     Mat nextAngles = angles.clone();
     Mat nextMagnitudes = magnitudes.clone();
-    // saveAngleGraph("cppIterate0.jpg", angles, magnitudes, 0.0f);
-    // saveMagnitudeGraph("cppIterate0_Mag.jpg", magnitudes);
 
     for (int i = 0; i < iterationTimes; ++i) {
-        cout << i << "th iteration." << endl;
+        cout << "iter " << i+1 << endl;
         iterate(5, angles, magnitudes, nextAngles, nextMagnitudes, coloredImage);
-        if ((i+1) % 5 == 0) {
-            string prefix = "newit" + to_string(i+1);
-            saveAngleToFile(prefix+"_angles.txt", angles);
-            saveAngleGraph(prefix+"_angles.jpg", angles, magnitudes, 0.0f);
-            // saveAngleGreyGraph(prefix+"GreyAngle.jpg", angles);
-            // saveMagnitudeGraph(prefix+"Mag.jpg", magnitudes);
+        if ((i+1) % saveStep == 0) {
+            string outName = imageName + "_" + to_string(i+1) + "_iter";
+            saveAngleToFile(outName + ".txt", angles);
+            saveAngleGraph(outName + ".jpg", angles, magnitudes, 0.0f);
         }
     }
     return 0;
@@ -333,6 +334,8 @@ Vec3b hsv2rgb (float h, float s, float v)
     } else if (hi == 5 || ah == 360) {
         return Vec3b(v*255, p*255, q*255);
     } else {
-        throw(h/(PI*2)*360);
+        return Vec3b(0, 0, 0);
+        std::cerr << "error angle:" << hi << std::endl;
+        // throw(h/(PI*2)*360);
     }
 }
