@@ -23,18 +23,10 @@ public:
     float magnitude;
     float weight;
     Pixel () {};
-    // Pixel (const Vec2i& position_, int cluster_, float angle_, float magnitude_);
 };
 
 typedef vector<vector<Pixel>> PixelMap;
 typedef vector<vector<int>> IndexCluster;
-
-// Pixel::Pixel (const Vec2i& position_, int cluster_, float angle_, float magnitude_)
-//     : position(position_)
-//     , cluster(cluster_)
-//     , angle(angle_)
-//     , magnitude(magnitude_)
-//     , weight(0.0f) {}
 
 bool comparePixelByAngle (const Pixel& p1, const Pixel& p2)
 {
@@ -179,9 +171,6 @@ void iterate (int k, PixelMap& pixel_map, const Mat& color_image, bool ignore_ma
             updateCell(r, c, k, pixel_map, old_pixel_map, color_image, ignore_mag);
         }
     }
-
-    // swap(angles, nextAngles);
-    // swap(magnitudes, nextMagnitudes);
 }
 
 void calc_gradients (const string& image_name, Mat& angles, Mat& magnitudes)
@@ -270,6 +259,23 @@ void save_angle_to_file (const string& file_name, const PixelMap& pixel_map)
     out_file.close();
 }
 
+void save_magnitute_to_file (const string& file_name, const PixelMap& pixel_map)
+{
+    assert(pixel_map.size() != 0);
+    const int rows = pixel_map.size();
+    const int cols = pixel_map[0].size();
+
+    ofstream out_file(file_name);
+    out_file << rows << " " << cols << endl;
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            out_file << pixel_map[r][c].magnitude << " ";
+        }
+        out_file << endl;
+    }
+    out_file.close();
+}
+
 // void saveMagnitudeGraph (const string& image_name, const Mat& magnitudes)
 // {
 //     const int rows = magnitudes.rows;
@@ -349,12 +355,8 @@ int main(const int argc, const char* argv[])
 
     Mat color_image = imread(image_name, CV_LOAD_IMAGE_COLOR);
     PixelMap pixel_map = construct_pixel_map(image_name, cluster_file_name);
-    // Mat angles, magnitudes;
-    // calc_gradients(image_name, angles, magnitudes);
-    // save_angle_graph(image_name+"_original_grad.jpg", angles, magnitudes, 0.0f);
 
-    // Mat nextAngles = angles.clone();
-    // Mat nextMagnitudes = magnitudes.clone();
+    save_magnitute_to_file(image_name+"_original_mag.txt", pixel_map);
 
     for (int i = 0; i < iteration_times; ++i) {
         cout << "iter " << i+1 << endl;
