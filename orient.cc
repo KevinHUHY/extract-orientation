@@ -18,17 +18,23 @@ Vec3b hsv2rgb (float h, float s, float v);
 class Pixel {
 public:
     Vec2i position;
+    int cluster;
     float angle;
     float magnitude;
     float weight;
-    Pixel (const Vec2i& position_, float angle_, float magnitude_);
+    Pixel () {};
+    // Pixel (const Vec2i& position_, int cluster_, float angle_, float magnitude_);
 };
 
-Pixel::Pixel (const Vec2i& position_, float angle_, float magnitude_)
-    : position(position_)
-    , angle(angle_)
-    , magnitude(magnitude_)
-    , weight(0.0f) {}
+typedef vector<vector<Pixel>> PixelMap;
+typedef vector<vector<int>> IndexCluster;
+
+// Pixel::Pixel (const Vec2i& position_, int cluster_, float angle_, float magnitude_)
+//     : position(position_)
+//     , cluster(cluster_)
+//     , angle(angle_)
+//     , magnitude(magnitude_)
+//     , weight(0.0f) {}
 
 bool comparePixelByAngle (const Pixel& p1, const Pixel& p2)
 {
@@ -52,25 +58,25 @@ float GaussianFilter::operator() (float x)
     return exp(-0.5 * pow((x-miu)/sigma, 2)) / (sigma * sqrt(2*PI));
 }
 
-void bilateralFilter (const Vec2i& centerPosition, vector<Pixel>& neighbors, const Mat& coloredImage)
+void bilateral_filter (const Vec2i& centerPosition, vector<Pixel>& neighbors, const Mat& color_image)
 {
     static GaussianFilter spatialFilter(2.0f, 0.0f);
     static GaussianFilter colorFilter(10.0f, 0.0f);
 
-    const Vec3b& centerColor = coloredImage.at<Vec3b>(centerPosition[0], centerPosition[1]);
+    const Vec3b& center_color = color_image.at<Vec3b>(centerPosition[0], centerPosition[1]);
 
     for (size_t i = 0; i < neighbors.size(); ++i) {
         const Pixel& neighbor = neighbors[i];
-        const Vec3b& neighborColor = coloredImage.at<Vec3b>(neighbor.position[0], neighbor.position[1]);
+        const Vec3b& neighbor_color = color_image.at<Vec3b>(neighbor.position[0], neighbor.position[1]);
 
-        float spatialDistance = norm(centerPosition - neighbor.position);
-        float colorDistance = norm(centerColor - neighborColor);
+        float spatial_distance = norm(centerPosition - neighbor.position);
+        float color_distance = norm(center_color - neighbor_color);
 
-        neighbors[i].weight = spatialFilter(spatialDistance) * colorFilter(colorDistance);
+        neighbors[i].weight = spatialFilter(spatial_distance) * colorFilter(color_distance);
     }
 }
 
-float interpolateMagnitude (const vector<Pixel>& neighbors)
+float interpolate_magnitude (const vector<Pixel>& neighbors)
 {
     float sumWeightedMagnitudes = 0.0f;
     float sumWeights = 0.0f;
@@ -83,7 +89,7 @@ float interpolateMagnitude (const vector<Pixel>& neighbors)
 }
 
 // not const here, input will be sorted according to its angle
-float interpolateAngle (vector<Pixel>& neighbors)
+float interpolate_angle (vector<Pixel>& neighbors)
 {
     sort(neighbors.begin(), neighbors.end(), comparePixelByAngle);
     float minDiff = neighbors.back().angle - neighbors[0].angle;
@@ -114,67 +120,75 @@ float interpolateAngle (vector<Pixel>& neighbors)
     return avgAngle;
 }
 
-void printPixels (const vector<Pixel>& qualifiedNeighbors)
+void printPixels (const vector<Pixel>& qualified_neighbors)
 {
-    for (int i = 0; i < qualifiedNeighbors.size(); ++i) {
-        cout << "r: " << qualifiedNeighbors[i].position[0]
-             << ", c: " << qualifiedNeighbors[i].position[1]
-             << ", angle: " << qualifiedNeighbors[i].angle
-             << ", magnitudes: " << qualifiedNeighbors[i].magnitude << endl;
+    for (int i = 0; i < qualified_neighbors.size(); ++i) {
+        cout << "r: " << qualified_neighbors[i].position[0]
+             << ", c: " << qualified_neighbors[i].position[1]
+             << ", angle: " << qualified_neighbors[i].angle
+             << ", magnitudes: " << qualified_neighbors[i].magnitude << endl;
     }
 }
 
 // k is kernelSize;
-void updateCell (int r, int c, int k, Mat& nextAngles, Mat& nextMagnitudes,
-                 const Mat& angles, const Mat& magnitudes, const Mat& coloredImage)
+void updateCell (int r, int c, int k, PixelMap& pixel_map, const PixelMap& old_pixel_map, const Mat& color_image, bool ignore_mag)
 {
-    const int rows = angles.rows;
-    const int cols = angles.cols;
+    assert(pixel_map.size() != 0);
+    const int rows = pixel_map.size();
+    const int cols = pixel_map[0].size();
     const int leftMost = max(0, c-k/2);
     const int rightMost = min(cols-1, c+k/2);
     const int upMost = max(0, r-k/2);
     const int downMost = min(rows-1, r+k/2);
 
-    vector<Pixel> qualifiedNeighbors;
+    vector<Pixel> qualified_neighbors;
 
     for (int rr = upMost; rr <= downMost; ++rr) {
         for (int cc = leftMost; cc <= rightMost; ++cc) {
-            if (magnitudes.at<float>(rr,cc) >= magnitudes.at<float>(r,c)) {
-                qualifiedNeighbors.push_back(Pixel(Vec2i(rr,cc), angles.at<float>(rr,cc), magnitudes.at<float>(rr,cc)));
+            if (pixel_map[rr][cc].cluster == pixel_map[r][c].cluster
+                && (ignore_mag || old_pixel_map[rr][cc].magnitude >= old_pixel_map[r][c].magnitude)) {
+                qualified_neighbors.push_back(old_pixel_map[rr][cc]);
             }
         }
     }
 
-    assert(qualifiedNeighbors.size() >= 1);
-    if (qualifiedNeighbors.size() == 1) {
+    assert(qualified_neighbors.size() >= 1);
+    if (qualified_neighbors.size() == 1) {
         return;
     }
-    bilateralFilter(Vec2i(r,c), qualifiedNeighbors, coloredImage);
-    nextMagnitudes.at<float>(r,c) = interpolateMagnitude(qualifiedNeighbors);
-    // next statement will sort the qualifiedNeighbors according to angles
-    nextAngles.at<float>(r,c) = interpolateAngle(qualifiedNeighbors);
+
+    // set weight for neighbors
+    bilateral_filter(Vec2i(r,c), qualified_neighbors, color_image);
+    pixel_map[r][c].magnitude = interpolate_magnitude(qualified_neighbors);
+
+    // next statement will sort the qualified_neighbors according to angles
+    pixel_map[r][c].angle = interpolate_angle(qualified_neighbors);
 }
 
-void iterate (int k, Mat& angles, Mat& magnitudes, Mat& nextAngles, Mat& nextMagnitudes, const Mat& coloredImage)
+void iterate (int k, PixelMap& pixel_map, const Mat& color_image, bool ignore_mag)
 {
-    const int rows = angles.rows;
-    const int cols = angles.cols;
+    assert(pixel_map.size() != 0);
+    const int rows = pixel_map.size();
+    const int cols = pixel_map[0].size();
+
+    PixelMap old_pixel_map = pixel_map;
+
     // #pragma omp parallel for
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
-            updateCell(r, c, k, nextAngles, nextMagnitudes, angles, magnitudes, coloredImage);
+            updateCell(r, c, k, pixel_map, old_pixel_map, color_image, ignore_mag);
         }
     }
 
-    swap(angles, nextAngles);
-    swap(magnitudes, nextMagnitudes);
+    // swap(angles, nextAngles);
+    // swap(magnitudes, nextMagnitudes);
 }
 
-void calcGradients (const string& imageName, Mat& angles, Mat& magnitudes)
+void calc_gradients (const string& image_name, Mat& angles, Mat& magnitudes)
 {
     const int ddepth = CV_32F;
 
-    Mat src = imread(imageName, CV_LOAD_IMAGE_GRAYSCALE);
+    Mat src = imread(image_name, CV_LOAD_IMAGE_GRAYSCALE);
     Mat gradX, gradY;
     // Sobel(src, gradX, ddepth, 1, 0, 5);
     // Sobel(src, gradY, ddepth, 0, 1, 5);
@@ -192,121 +206,168 @@ void calcGradients (const string& imageName, Mat& angles, Mat& magnitudes)
     magnitude(gradX, gradY, magnitudes);
 }
 
-void saveAngleGraph (const string& imageName, const Mat& angles,
-                     const Mat& magnitudes, float threshold=0.0f)
+void save_angle_graph (const string& image_name, const PixelMap& pixel_map)
 {
-    const int rows = angles.rows;
-    const int cols = angles.cols;
+    assert(pixel_map.size() != 0);
+    const int rows = pixel_map.size();
+    const int cols = pixel_map[0].size();
 
-    Mat imageOfAngles = Mat(rows, cols, CV_8UC3);
-    double maxMagnitude;
-    minMaxLoc(magnitudes, 0, &maxMagnitude);
-    float t = maxMagnitude * threshold;
+    Mat angle_image = Mat(rows, cols, CV_8UC3);
 
-    // #pragma omp parallel for
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
-            if (magnitudes.at<float>(r,c) > t) {
-                try {
-                    imageOfAngles.at<Vec3b>(r,c) = hsv2rgb(angles.at<float>(r,c), 1.0, 1.0);
-                } catch (double a) {
-                    cout << r << ", " << c << "; Invalid angle: " << a << endl;
-                    assert(false);
-                }
-            } else {
-                imageOfAngles.at<Vec3b>(r,c) = Vec3b(0,0,0);
+            try {
+                angle_image.at<Vec3b>(r,c) = hsv2rgb(pixel_map[r][c].angle, 1.0, 1.0);
+            } catch (double a) {
+                cout << r << ", " << c << "; Invalid angle: " << a << endl;
+                assert(false);
             }
         }
     }
 
-    cout << "saving " << imageName << endl;
-    cvtColor(imageOfAngles, imageOfAngles, CV_RGB2BGR);
-    imwrite(imageName, imageOfAngles);
+    cout << "saving " << image_name << endl;
+    cvtColor(angle_image, angle_image, CV_RGB2BGR);
+    imwrite(image_name, angle_image);
 }
 
-void saveAngleGreyGraph (const string& imageName, const Mat& angles)
+// void saveAngleGreyGraph (const string& image_name, const Mat& angles)
+// {
+//     const int rows = angles.rows;
+//     const int cols = angles.cols;
+//     Mat angle_image = Mat(rows, cols, CV_8U);
+//
+//     for (int r = 0; r < rows; ++r) {
+//         for (int c = 0; c < cols; ++c) {
+//             float ratio = (angles.at<float>(r,c) + PI/2) / PI;
+//             if (ratio > 1.0f) {
+//                 cout << "saveAngleGreyGraph: " << r << ", " << c << ", ratio: " << ratio << endl;
+//                 ratio = 1.0f;
+//             } else if (ratio < 0.0f) {
+//                 cout << "saveAngleGreyGraph: " << r << ", " << c << ", ratio: " << ratio << endl;
+//                 ratio = 0.0f;
+//             }
+//             // unsigned char greyVal = ratio * 255;
+//             angle_image.at<unsigned char>(r,c) = (unsigned char) (ratio * 255);
+//         }
+//     }
+//     imwrite(image_name, angle_image);
+// }
+
+void save_angle_to_file (const string& file_name, const PixelMap& pixel_map)
 {
-    const int rows = angles.rows;
-    const int cols = angles.cols;
-    Mat imageOfAngles = Mat(rows, cols, CV_8U);
+    assert(pixel_map.size() != 0);
+    const int rows = pixel_map.size();
+    const int cols = pixel_map[0].size();
 
-    for (int r = 0; r < rows; ++r) {
-        for (int c = 0; c < cols; ++c) {
-            float ratio = (angles.at<float>(r,c) + PI/2) / PI;
-            if (ratio > 1.0f) {
-                cout << "saveAngleGreyGraph: " << r << ", " << c << ", ratio: " << ratio << endl;
-                ratio = 1.0f;
-            } else if (ratio < 0.0f) {
-                cout << "saveAngleGreyGraph: " << r << ", " << c << ", ratio: " << ratio << endl;
-                ratio = 0.0f;
-            }
-            // unsigned char greyVal = ratio * 255;
-            imageOfAngles.at<unsigned char>(r,c) = (unsigned char) (ratio * 255);
-        }
-    }
-    imwrite(imageName, imageOfAngles);
-}
-
-void saveAngleToFile (const string& fileName, const Mat& angles)
-{
-    const int rows = angles.rows;
-    const int cols = angles.cols;
-
-    ofstream out_file(fileName);
+    ofstream out_file(file_name);
     out_file << rows << " " << cols << endl;
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
-            out_file << angles.at<float>(r,c) << " ";
+            out_file << pixel_map[r][c].angle << " ";
         }
         out_file << endl;
     }
     out_file.close();
 }
 
-void saveMagnitudeGraph (const string& imageName, const Mat& magnitudes)
+// void saveMagnitudeGraph (const string& image_name, const Mat& magnitudes)
+// {
+//     const int rows = magnitudes.rows;
+//     const int cols = magnitudes.cols;
+//
+//     Mat imageOfMagnitudes = Mat(rows, cols, CV_8U);
+//     double max_magnitude;
+//     minMaxLoc(magnitudes, 0, &max_magnitude);
+//
+//     // #pragma omp parallel for
+//     for (int r = 0; r < rows; ++r) {
+//         for (int c = 0; c < cols; ++c) {
+//             imageOfMagnitudes.at<unsigned char>(r,c) = (unsigned char)(magnitudes.at<float>(r,c) / max_magnitude * 255);
+//         }
+//     }
+//     imwrite(image_name, imageOfMagnitudes);
+// }
+
+template <class T>
+vector<vector<T>> load_matrix_from_file (const string& file_name)
 {
-    const int rows = magnitudes.rows;
-    const int cols = magnitudes.cols;
+    ifstream in_file(file_name);
+    int rows, cols;
+    in_file >> rows >> cols;
+    assert(rows > 0 && cols > 0);
+    vector<vector<T>> matrix(rows, vector<T>(cols));
 
-    Mat imageOfMagnitudes = Mat(rows, cols, CV_8U);
-    double maxMagnitude;
-    minMaxLoc(magnitudes, 0, &maxMagnitude);
-
-    // #pragma omp parallel for
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
-            imageOfMagnitudes.at<unsigned char>(r,c) = (unsigned char)(magnitudes.at<float>(r,c) / maxMagnitude * 255);
+            in_file >> matrix[r][c];
         }
     }
-    imwrite(imageName, imageOfMagnitudes);
+    in_file.close();
+    return matrix;
+}
+
+IndexCluster load_index_cluster (const string& file_name)
+{
+    return load_matrix_from_file<int>(file_name);
+}
+
+PixelMap construct_pixel_map(const string& image_name, const string& cluster_file_name)
+{
+    Mat angles, magnitudes;
+    calc_gradients(image_name, angles, magnitudes);
+
+    IndexCluster index_cluster = load_index_cluster(cluster_file_name);
+
+    const int rows = angles.rows;
+    const int cols = angles.cols;
+    assert(rows == magnitudes.rows && cols == magnitudes.cols);
+    assert(rows == index_cluster.size() && cols == index_cluster[0].size());
+
+    PixelMap pixel_map(rows, vector<Pixel>(cols, Pixel()));
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            pixel_map[r][c].position = Vec2i(r,c);
+            pixel_map[r][c].cluster = index_cluster[r][c];
+            pixel_map[r][c].angle = angles.at<float>(r,c);
+            pixel_map[r][c].magnitude = magnitudes.at<float>(r,c);
+        }
+    }
+    return pixel_map;
 }
 
 int main(const int argc, const char* argv[])
 {
-    if (argc != 4) {
-        cout << "usage: file_name, num_of_iter, save_step_size" << endl;
+    if (argc != 5) {
+        cout << "usage: image_name, cluster_file_name, num_of_iter, save_step_size" << endl;
         return 0;
     }
 
-    const string imageName = argv[1];
-    const int iterationTimes = atoi(argv[2]);
-    const int saveStep = atoi(argv[3]);
+    const string image_name = argv[1];
+    const string cluster_file_name = argv[2];
+    const int iteration_times = atoi(argv[3]);
+    const int save_step = atoi(argv[4]);
 
-    Mat coloredImage = imread(imageName, CV_LOAD_IMAGE_COLOR);
-    Mat angles, magnitudes;
-    calcGradients(imageName, angles, magnitudes);
-    saveAngleGraph(imageName+"_original_grad.jpg", angles, magnitudes, 0.0f);
+    Mat color_image = imread(image_name, CV_LOAD_IMAGE_COLOR);
+    PixelMap pixel_map = construct_pixel_map(image_name, cluster_file_name);
+    // Mat angles, magnitudes;
+    // calc_gradients(image_name, angles, magnitudes);
+    // save_angle_graph(image_name+"_original_grad.jpg", angles, magnitudes, 0.0f);
 
-    Mat nextAngles = angles.clone();
-    Mat nextMagnitudes = magnitudes.clone();
+    // Mat nextAngles = angles.clone();
+    // Mat nextMagnitudes = magnitudes.clone();
 
-    for (int i = 0; i < iterationTimes; ++i) {
+    for (int i = 0; i < iteration_times; ++i) {
         cout << "iter " << i+1 << endl;
-        iterate(5, angles, magnitudes, nextAngles, nextMagnitudes, coloredImage);
-        if ((i+1) % saveStep == 0) {
-            string outName = imageName + "_" + to_string(i+1) + "_iter";
-            saveAngleToFile(outName + ".txt", angles);
-            saveAngleGraph(outName + ".jpg", angles, magnitudes, 0.0f);
+        if (i < iteration_times / 2) {
+            iterate(7, pixel_map, color_image, false);
+        } else {
+            iterate(7, pixel_map, color_image, true);
+        }
+
+        if ((i+1) % save_step == 0) {
+            string out_name = "result_pic/" + image_name + "_" + to_string(i+1) + "_iter";
+            save_angle_to_file(out_name + ".txt", pixel_map);
+            save_angle_graph(out_name + ".jpg", pixel_map);
         }
     }
     return 0;
