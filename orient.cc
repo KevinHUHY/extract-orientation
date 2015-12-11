@@ -15,14 +15,15 @@ const double PI = 3.14159265358979323846;
 
 Vec3b hsv2rgb (float h, float s, float v);
 
-class Pixel {
+struct Pixel {
 public:
     Vec2i position;
     int cluster;
+    float dx;
+    float dy;
     float angle;
     float magnitude;
     float weight;
-    Pixel () {};
 };
 
 typedef vector<vector<Pixel>> PixelMap;
@@ -173,28 +174,6 @@ void iterate (int k, PixelMap& pixel_map, const Mat& color_image, bool ignore_ma
     }
 }
 
-void calc_gradients (const string& image_name, Mat& angles, Mat& magnitudes)
-{
-    const int ddepth = CV_32F;
-
-    Mat src = imread(image_name, CV_LOAD_IMAGE_GRAYSCALE);
-    Mat gradX, gradY;
-    // Sobel(src, gradX, ddepth, 1, 0, 5);
-    // Sobel(src, gradY, ddepth, 0, 1, 5);
-    Scharr(src, gradX, ddepth, 1, 0);
-    Scharr(src, gradY, ddepth, 0, 1);
-
-    divide(gradX, -gradY, angles);
-    // #pragma omp parallel for
-    for (int r = 0; r < angles.rows; ++r) {
-        for (int c = 0; c < angles.cols; ++c) {
-            angles.at<float>(r,c) = atan(angles.at<float>(r,c));
-        }
-    }
-
-    magnitude(gradX, gradY, magnitudes);
-}
-
 void save_angle_graph (const string& image_name, const PixelMap& pixel_map)
 {
     assert(pixel_map.size() != 0);
@@ -218,29 +197,6 @@ void save_angle_graph (const string& image_name, const PixelMap& pixel_map)
     cvtColor(angle_image, angle_image, CV_RGB2BGR);
     imwrite(image_name, angle_image);
 }
-
-// void saveAngleGreyGraph (const string& image_name, const Mat& angles)
-// {
-//     const int rows = angles.rows;
-//     const int cols = angles.cols;
-//     Mat angle_image = Mat(rows, cols, CV_8U);
-//
-//     for (int r = 0; r < rows; ++r) {
-//         for (int c = 0; c < cols; ++c) {
-//             float ratio = (angles.at<float>(r,c) + PI/2) / PI;
-//             if (ratio > 1.0f) {
-//                 cout << "saveAngleGreyGraph: " << r << ", " << c << ", ratio: " << ratio << endl;
-//                 ratio = 1.0f;
-//             } else if (ratio < 0.0f) {
-//                 cout << "saveAngleGreyGraph: " << r << ", " << c << ", ratio: " << ratio << endl;
-//                 ratio = 0.0f;
-//             }
-//             // unsigned char greyVal = ratio * 255;
-//             angle_image.at<unsigned char>(r,c) = (unsigned char) (ratio * 255);
-//         }
-//     }
-//     imwrite(image_name, angle_image);
-// }
 
 void save_angle_to_file (const string& file_name, const PixelMap& pixel_map)
 {
@@ -276,24 +232,6 @@ void save_magnitute_to_file (const string& file_name, const PixelMap& pixel_map)
     out_file.close();
 }
 
-// void saveMagnitudeGraph (const string& image_name, const Mat& magnitudes)
-// {
-//     const int rows = magnitudes.rows;
-//     const int cols = magnitudes.cols;
-//
-//     Mat imageOfMagnitudes = Mat(rows, cols, CV_8U);
-//     double max_magnitude;
-//     minMaxLoc(magnitudes, 0, &max_magnitude);
-//
-//     // #pragma omp parallel for
-//     for (int r = 0; r < rows; ++r) {
-//         for (int c = 0; c < cols; ++c) {
-//             imageOfMagnitudes.at<unsigned char>(r,c) = (unsigned char)(magnitudes.at<float>(r,c) / max_magnitude * 255);
-//         }
-//     }
-//     imwrite(image_name, imageOfMagnitudes);
-// }
-
 template <class T>
 vector<vector<T>> load_matrix_from_file (const string& file_name)
 {
@@ -319,13 +257,18 @@ IndexCluster load_index_cluster (const string& file_name)
 
 PixelMap construct_pixel_map(const string& image_name, const string& cluster_file_name)
 {
-    Mat angles, magnitudes;
-    calc_gradients(image_name, angles, magnitudes);
-
+    Mat src = imread(image_name, CV_LOAD_IMAGE_GRAYSCALE);
     IndexCluster index_cluster = load_index_cluster(cluster_file_name);
 
-    const int rows = angles.rows;
-    const int cols = angles.cols;
+    Mat grad_x, grad_y, quotient, magnitudes;
+
+    Scharr(src, grad_x, CV_32F, 1, 0);
+    Scharr(src, grad_y, CV_32F, 0, 1);
+    divide(grad_x, -grad_y, quotient);
+    magnitude(grad_x, grad_y, magnitudes);
+
+    const int rows = quotient.rows;
+    const int cols = quotient.cols;
     assert(rows == magnitudes.rows && cols == magnitudes.cols);
     assert(rows == index_cluster.size() && cols == index_cluster[0].size());
 
@@ -334,7 +277,9 @@ PixelMap construct_pixel_map(const string& image_name, const string& cluster_fil
         for (int c = 0; c < cols; ++c) {
             pixel_map[r][c].position = Vec2i(r,c);
             pixel_map[r][c].cluster = index_cluster[r][c];
-            pixel_map[r][c].angle = angles.at<float>(r,c);
+            pixel_map[r][c].dx = grad_x.at<float>(r,c);
+            pixel_map[r][c].dy = grad_y.at<float>(r,c);
+            pixel_map[r][c].angle = atan(quotient.at<float>(r,c));
             pixel_map[r][c].magnitude = magnitudes.at<float>(r,c);
         }
     }
