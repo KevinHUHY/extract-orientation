@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <exception>
 #include <fstream>
+#include <unordered_map>
 
 using namespace std;
 using namespace cv;
@@ -174,6 +175,43 @@ void iterate (int k, PixelMap& pixel_map, const Mat& color_image, bool ignore_ma
     }
 }
 
+Vec3b gradient_pixel (const Pixel& p, float max_grad)
+{
+    assert(p.cluster < 255);
+    unsigned char r = p.dx / max_grad * 255;
+    unsigned char g = p.dy / max_grad * 255;
+    unsigned char b = p.cluster;
+
+    return Vec3b(b,g,r);
+}
+
+void save_gradient (const string& image_name, const PixelMap& pixel_map)
+{
+    assert(pixel_map.size() != 0);
+    const int rows = pixel_map.size();
+    const int cols = pixel_map[0].size();
+
+    Mat image = Mat(rows, cols, CV_8UC3);
+
+    float max_grad = 0.0f;
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            // assert(pixel_map[r][c].cluster < 255);
+            max_grad = max(pixel_map[r][c].dx, max_grad);
+            max_grad = max(pixel_map[r][c].dy, max_grad);
+        }
+    }
+
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            image.at<Vec3b>(r,c) = gradient_pixel(pixel_map[r][c], max_grad);
+        }
+    }
+
+    cout << "saving " << image_name << endl;
+    imwrite(image_name, image);
+}
+
 void save_angle_graph (const string& image_name, const PixelMap& pixel_map)
 {
     assert(pixel_map.size() != 0);
@@ -255,7 +293,7 @@ IndexCluster load_index_cluster (const string& file_name)
     return load_matrix_from_file<int>(file_name);
 }
 
-PixelMap construct_pixel_map(const string& image_name, const string& cluster_file_name)
+PixelMap construct_pixel_map (const string& image_name, const string& cluster_file_name)
 {
     Mat src = imread(image_name, CV_LOAD_IMAGE_GRAYSCALE);
     IndexCluster index_cluster = load_index_cluster(cluster_file_name);
@@ -273,14 +311,20 @@ PixelMap construct_pixel_map(const string& image_name, const string& cluster_fil
     assert(rows == index_cluster.size() && cols == index_cluster[0].size());
 
     PixelMap pixel_map(rows, vector<Pixel>(cols, Pixel()));
+    unordered_map<int, int> new_cluster;
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
             pixel_map[r][c].position = Vec2i(r,c);
-            pixel_map[r][c].cluster = index_cluster[r][c];
             pixel_map[r][c].dx = grad_x.at<float>(r,c);
             pixel_map[r][c].dy = grad_y.at<float>(r,c);
             pixel_map[r][c].angle = atan(quotient.at<float>(r,c));
             pixel_map[r][c].magnitude = magnitudes.at<float>(r,c);
+
+            int old_cluster = index_cluster[r][c];
+            if (new_cluster.find(old_cluster) == new_cluster.end()) {
+                new_cluster[old_cluster] = new_cluster.size();
+            }
+            pixel_map[r][c].cluster = new_cluster[old_cluster];
         }
     }
     return pixel_map;
@@ -288,15 +332,20 @@ PixelMap construct_pixel_map(const string& image_name, const string& cluster_fil
 
 int main(const int argc, const char* argv[])
 {
-    if (argc != 5) {
-        cout << "usage: image_name, cluster_file_name, num_of_iter, save_step_size" << endl;
+    if (argc != 6) {
+        cout << "usage: image_name, cluster_file_name, num_of_iter, save_step_size, out_folder" << endl;
         return 0;
     }
 
-    const string image_name = argv[1];
-    const string cluster_file_name = argv[2];
+    const string image_name(argv[1]);
+    const string cluster_file_name(argv[2]);
     const int iteration_times = atoi(argv[3]);
     const int save_step = atoi(argv[4]);
+    string out_folder(argv[5]);
+
+    if (out_folder.back() != '/') {
+        out_folder.push_back('/');
+    }
 
     Mat color_image = imread(image_name, CV_LOAD_IMAGE_COLOR);
     PixelMap pixel_map = construct_pixel_map(image_name, cluster_file_name);
@@ -305,16 +354,17 @@ int main(const int argc, const char* argv[])
 
     for (int i = 0; i < iteration_times; ++i) {
         cout << "iter " << i+1 << endl;
-        if (i < iteration_times / 2) {
+        if (i < 20) {
             iterate(7, pixel_map, color_image, false);
         } else {
             iterate(7, pixel_map, color_image, true);
         }
 
         if ((i+1) % save_step == 0) {
-            string out_name = "result_pic/" + image_name + "_" + to_string(i+1) + "_iter";
-            save_angle_to_file(out_name + ".txt", pixel_map);
+            string out_name = out_folder + image_name + "_" + to_string(i+1) + "_iter";
+            // save_angle_to_file(out_name + ".txt", pixel_map);
             save_angle_graph(out_name + ".jpg", pixel_map);
+            save_gradient(out_name + "_grad.jpg", pixel_map);
         }
     }
     return 0;
